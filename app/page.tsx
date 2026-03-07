@@ -1,11 +1,12 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { Play, Pause, RotateCcw, Video, VideoOff, Minus, Plus, Zap, Eye, AlertCircle, Trophy } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useGame } from "@/lib/game-context"
+import { fetchScore, resetGame, getFrameUrl } from "@/lib/api"
 
 export default function HomePage() {
   const {
@@ -15,10 +16,14 @@ export default function HomePage() {
     scoreB,
     gameStatus,
     detectionStatus,
+    lastPoint,
     setPlayerA,
     setPlayerB,
     incrementScore,
     decrementScore,
+    setScoreA,
+    setScoreB,
+    setLastPoint,
     startMatch,
     pauseMatch,
     resumeMatch,
@@ -29,6 +34,48 @@ export default function HomePage() {
   } = useGame()
 
   const [isConnecting, setIsConnecting] = useState(false)
+  const [frameTs, setFrameTs] = useState(Date.now())
+  const frameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const scoreIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    if (detectionStatus !== "detecting") {
+      if (frameIntervalRef.current) clearInterval(frameIntervalRef.current)
+      if (scoreIntervalRef.current) clearInterval(scoreIntervalRef.current)
+      return
+    }
+
+    // Refresh camera frame ~6fps
+    frameIntervalRef.current = setInterval(() => {
+      setFrameTs(Date.now())
+    }, 150)
+
+    // Poll score every second
+    scoreIntervalRef.current = setInterval(async () => {
+      try {
+        const data = await fetchScore()
+        setScoreA(data.score_a)
+        setScoreB(data.score_b)
+        if (data.last_point) setLastPoint(data.last_point)
+      } catch {
+        // silently ignore transient fetch errors
+      }
+    }, 1000)
+
+    return () => {
+      if (frameIntervalRef.current) clearInterval(frameIntervalRef.current)
+      if (scoreIntervalRef.current) clearInterval(scoreIntervalRef.current)
+    }
+  }, [detectionStatus, setScoreA, setScoreB, setLastPoint])
+
+  const handleNewMatch = async () => {
+    try {
+      await resetGame()
+    } catch {
+      // proceed even if API reset fails
+    }
+    resetMatch()
+  }
 
   const handleCameraToggle = () => {
     if (detectionStatus === "disconnected") {
@@ -79,17 +126,22 @@ export default function HomePage() {
           </div>
         </div>
         <div className="relative aspect-video bg-secondary rounded-2xl overflow-hidden">
-          {detectionStatus !== "disconnected" ? (
+          {detectionStatus === "detecting" ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={getFrameUrl(frameTs)}
+              alt="Camera feed"
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+          ) : detectionStatus === "connecting" ? (
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="text-center">
                 <motion.div
                   animate={{ scale: [1, 1.2, 1] }}
                   transition={{ repeat: Infinity, duration: 2 }}
-                  className="w-2.5 h-2.5 bg-green-500 rounded-full mx-auto mb-2"
+                  className="w-2.5 h-2.5 bg-yellow-400 rounded-full mx-auto mb-2"
                 />
-                <p className="text-xs text-muted-foreground">
-                  {detectionStatus === "connecting" ? "Connecting..." : "AI Active"}
-                </p>
+                <p className="text-xs text-muted-foreground">Connecting...</p>
               </div>
             </div>
           ) : (
@@ -225,6 +277,23 @@ export default function HomePage() {
         </div>
       </motion.div>
 
+      {/* Last Point */}
+      <AnimatePresence mode="wait">
+        {lastPoint && (
+          <motion.div
+            key={lastPoint}
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="-mt-3 mb-4 flex items-center justify-center gap-1.5"
+          >
+            <Zap className="w-3 h-3 text-primary shrink-0" />
+            <p className="text-xs text-muted-foreground truncate">{lastPoint}</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Game Controls */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -285,7 +354,7 @@ export default function HomePage() {
           <Button
             variant="secondary"
             className="w-full h-12 text-sm font-medium rounded-xl"
-            onClick={resetMatch}
+            onClick={handleNewMatch}
           >
             <RotateCcw className="w-4 h-4 mr-2" />
             New Match

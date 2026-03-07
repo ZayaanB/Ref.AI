@@ -33,6 +33,7 @@ interface GameState {
   pastGames: PastGame[]
   servingPlayer: "A" | "B"
   matchPoints: number
+  lastPoint: string | null
 }
 
 interface GameContextType extends GameState {
@@ -40,6 +41,8 @@ interface GameContextType extends GameState {
   setPlayerB: (name: string) => void
   incrementScore: (player: "A" | "B") => void
   decrementScore: (player: "A" | "B") => void
+  setScoreA: (n: number) => void
+  setScoreB: (n: number) => void
   setGameStatus: (status: GameStatus) => void
   setDetectionStatus: (status: DetectionStatus) => void
   addEvent: (event: Omit<GameEvent, "id" | "timestamp">) => void
@@ -50,6 +53,7 @@ interface GameContextType extends GameState {
   resetMatch: () => void
   setMatchPoints: (points: number) => void
   toggleServe: () => void
+  setLastPoint: (s: string | null) => void
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined)
@@ -87,6 +91,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     ],
     servingPlayer: "A",
     matchPoints: 11,
+    lastPoint: null,
   })
 
   const setPlayerA = useCallback((name: string) => {
@@ -95,6 +100,18 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
   const setPlayerB = useCallback((name: string) => {
     setState((s) => ({ ...s, playerB: name }))
+  }, [])
+
+  const setScoreA = useCallback((n: number) => {
+    setState((s) => ({ ...s, scoreA: n }))
+  }, [])
+
+  const setScoreB = useCallback((n: number) => {
+    setState((s) => ({ ...s, scoreB: n }))
+  }, [])
+
+  const setLastPoint = useCallback((lp: string | null) => {
+    setState((s) => ({ ...s, lastPoint: lp }))
   }, [])
 
   const incrementScore = useCallback((player: "A" | "B") => {
@@ -178,6 +195,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       gameStatus: "idle",
       events: [],
       servingPlayer: "A",
+      lastPoint: null,
     }))
   }, [])
 
@@ -200,6 +218,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
         setPlayerB,
         incrementScore,
         decrementScore,
+        setScoreA,
+        setScoreB,
         setGameStatus,
         setDetectionStatus,
         addEvent,
@@ -210,6 +230,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
         resetMatch,
         setMatchPoints,
         toggleServe,
+        setLastPoint,
       }}
     >
       {children}
