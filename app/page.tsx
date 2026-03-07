@@ -38,20 +38,9 @@ export default function HomePage() {
   const frameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const scoreIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Always poll /score every second
   useEffect(() => {
-    if (detectionStatus !== "detecting") {
-      if (frameIntervalRef.current) clearInterval(frameIntervalRef.current)
-      if (scoreIntervalRef.current) clearInterval(scoreIntervalRef.current)
-      return
-    }
-
-    // Refresh camera frame ~6fps
-    frameIntervalRef.current = setInterval(() => {
-      setFrameTs(Date.now())
-    }, 150)
-
-    // Poll score every second
-    scoreIntervalRef.current = setInterval(async () => {
+    const poll = async () => {
       try {
         const data = await fetchScore()
         setScoreA(data.score_a)
@@ -60,13 +49,27 @@ export default function HomePage() {
       } catch {
         // silently ignore transient fetch errors
       }
-    }, 1000)
-
+    }
+    poll()
+    scoreIntervalRef.current = setInterval(poll, 1000)
     return () => {
-      if (frameIntervalRef.current) clearInterval(frameIntervalRef.current)
       if (scoreIntervalRef.current) clearInterval(scoreIntervalRef.current)
     }
-  }, [detectionStatus, setScoreA, setScoreB, setLastPoint])
+  }, [setScoreA, setScoreB, setLastPoint])
+
+  // Refresh camera frame ~6fps only when detecting
+  useEffect(() => {
+    if (detectionStatus !== "detecting") {
+      if (frameIntervalRef.current) clearInterval(frameIntervalRef.current)
+      return
+    }
+    frameIntervalRef.current = setInterval(() => {
+      setFrameTs(Date.now())
+    }, 150)
+    return () => {
+      if (frameIntervalRef.current) clearInterval(frameIntervalRef.current)
+    }
+  }, [detectionStatus])
 
   const handleNewMatch = async () => {
     try {
