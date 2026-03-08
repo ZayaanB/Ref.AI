@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { GameProvider } from '@/lib/game-context'
+import { SolanaWalletProvider } from '@/components/wallet-provider'
 import { BottomNav } from '@/components/bottom-nav'
 import { TopNav } from '@/components/top-nav'
 import './globals.css'
@@ -32,13 +33,15 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.variable} font-sans antialiased`}>
-        <GameProvider>
-          <TopNav />
-          <main className="min-h-screen pb-24">
-            {children}
-          </main>
-          <BottomNav />
-        </GameProvider>
+        <SolanaWalletProvider>
+          <GameProvider>
+            <TopNav />
+            <main className="min-h-screen pb-24">
+              {children}
+            </main>
+            <BottomNav />
+          </GameProvider>
+        </SolanaWalletProvider>
         <Analytics />
       </body>
     </html>

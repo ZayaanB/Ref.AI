@@ -34,6 +34,11 @@ interface GameState {
   servingPlayer: "A" | "B"
   matchPoints: number
   lastPoint: string | null
+  // Solana escrow
+  matchId: string
+  stakeSOL: number
+  playerBWallet: string
+  matchWinner: string | null
 }
 
 interface GameContextType extends GameState {
@@ -46,7 +51,7 @@ interface GameContextType extends GameState {
   setGameStatus: (status: GameStatus) => void
   setDetectionStatus: (status: DetectionStatus) => void
   addEvent: (event: Omit<GameEvent, "id" | "timestamp">) => void
-  startMatch: () => void
+  startMatch: (matchId?: string) => void
   pauseMatch: () => void
   resumeMatch: () => void
   endMatch: () => void
@@ -54,6 +59,10 @@ interface GameContextType extends GameState {
   setMatchPoints: (points: number) => void
   toggleServe: () => void
   setLastPoint: (s: string | null) => void
+  // Solana escrow
+  setStakeSOL: (sol: number) => void
+  setPlayerBWallet: (addr: string) => void
+  setMatchWinner: (winner: string | null) => void
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined)
@@ -71,6 +80,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
     servingPlayer: "A",
     matchPoints: 11,
     lastPoint: null,
+    matchId: "",
+    stakeSOL: 0,
+    playerBWallet: "",
+    matchWinner: null,
   })
 
   const setPlayerA = useCallback((name: string) => {
@@ -91,6 +104,18 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
   const setLastPoint = useCallback((lp: string | null) => {
     setState((s) => ({ ...s, lastPoint: lp }))
+  }, [])
+
+  const setStakeSOL = useCallback((sol: number) => {
+    setState((s) => ({ ...s, stakeSOL: sol }))
+  }, [])
+
+  const setPlayerBWallet = useCallback((addr: string) => {
+    setState((s) => ({ ...s, playerBWallet: addr }))
+  }, [])
+
+  const setMatchWinner = useCallback((winner: string | null) => {
+    setState((s) => ({ ...s, matchWinner: winner }))
   }, [])
 
   const incrementScore = useCallback((player: "A" | "B") => {
@@ -127,13 +152,15 @@ export function GameProvider({ children }: { children: ReactNode }) {
     }))
   }, [])
 
-  const startMatch = useCallback(() => {
+  const startMatch = useCallback((newMatchId?: string) => {
     setState((s) => ({
       ...s,
       gameStatus: "active",
       scoreA: 0,
       scoreB: 0,
       events: [],
+      matchId: newMatchId ?? Math.random().toString(36).slice(2, 11),
+      matchWinner: null,
     }))
   }, [])
 
@@ -175,6 +202,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       events: [],
       servingPlayer: "A",
       lastPoint: null,
+      matchId: "",
+      matchWinner: null,
     }))
   }, [])
 
@@ -210,6 +239,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
         setMatchPoints,
         toggleServe,
         setLastPoint,
+        setStakeSOL,
+        setPlayerBWallet,
+        setMatchWinner,
       }}
     >
       {children}
