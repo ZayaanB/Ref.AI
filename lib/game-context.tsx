@@ -37,6 +37,7 @@ interface GameState {
   // Solana escrow
   matchId: string
   stakeSOL: number
+  playerAWallet: string
   playerBWallet: string
   matchWinner: string | null
 }
@@ -61,6 +62,7 @@ interface GameContextType extends GameState {
   setLastPoint: (s: string | null) => void
   // Solana escrow
   setStakeSOL: (sol: number) => void
+  setPlayerAWallet: (addr: string) => void
   setPlayerBWallet: (addr: string) => void
   setMatchWinner: (winner: string | null) => void
 }
@@ -82,6 +84,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     lastPoint: null,
     matchId: "",
     stakeSOL: 0,
+    playerAWallet: "",
     playerBWallet: "",
     matchWinner: null,
   })
@@ -108,6 +111,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
   const setStakeSOL = useCallback((sol: number) => {
     setState((s) => ({ ...s, stakeSOL: sol }))
+  }, [])
+
+  const setPlayerAWallet = useCallback((addr: string) => {
+    setState((s) => ({ ...s, playerAWallet: addr }))
   }, [])
 
   const setPlayerBWallet = useCallback((addr: string) => {
@@ -204,6 +211,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       lastPoint: null,
       matchId: "",
       matchWinner: null,
+      playerAWallet: "",
+      playerBWallet: "",
     }))
   }, [])
 
@@ -240,6 +249,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
         toggleServe,
         setLastPoint,
         setStakeSOL,
+        setPlayerAWallet,
         setPlayerBWallet,
         setMatchWinner,
       }}

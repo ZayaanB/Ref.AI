@@ -1,15 +1,15 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { Play, Pause, RotateCcw, Video, VideoOff, Minus, Plus, Zap, Eye, AlertCircle, Trophy, Wallet, ExternalLink } from "lucide-react"
+import { Play, Pause, RotateCcw, Video, VideoOff, Minus, Plus, Zap, Eye, AlertCircle, Trophy, Wallet, Loader2, CheckCircle2, XCircle, Copy } from "lucide-react"
+import QRCode from "react-qr-code"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useGame } from "@/lib/game-context"
 import { fetchScore, resetGame, getFrameUrl } from "@/lib/api"
 import { useWallet } from "@solana/wallet-adapter-react"
-import { LAMPORTS_PER_SOL } from "@solana/web3.js"
-import { useEscrow, solscanTx, shortenAddress } from "@/lib/escrow"
+import { useEscrow, shortenAddress } from "@/lib/escrow"
 
 export default function HomePage() {
   const {
@@ -20,9 +20,8 @@ export default function HomePage() {
     gameStatus,
     detectionStatus,
     lastPoint,
-    matchId,
     stakeSOL,
-    playerBWallet,
+    matchId,
     matchWinner,
     setPlayerA,
     setPlayerB,
@@ -32,7 +31,6 @@ export default function HomePage() {
     setScoreB,
     setLastPoint,
     setStakeSOL,
-    setPlayerBWallet,
     setMatchWinner,
     startMatch,
     pauseMatch,
@@ -43,14 +41,53 @@ export default function HomePage() {
     pastGames,
   } = useGame()
 
-  const { publicKey, connected, wallets, select, connect, disconnect } = useWallet()
+  const { publicKey, connected, wallet, wallets, select, connect, disconnect } = useWallet()
   const escrow = useEscrow()
-  const [showWallets, setShowWallets] = useState(false)
-  const [bettingOn, setBettingOn] = useState<"A" | "B">("A")
+
+  // Track which player slot is depositing on this device
+  const [mySide, setMySide] = useState<"A" | "B" | null>(null)
+  const [joinCode, setJoinCode] = useState("")
+  const [copied, setCopied] = useState(false)
+
   const [isConnecting, setIsConnecting] = useState(false)
   const [frameTs, setFrameTs] = useState(Date.now())
   const frameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const scoreIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Poll escrow status when holding (waiting for opponent)
+  useEffect(() => {
+    if (escrow.phase !== "holding" || !matchId) return
+    const interval = setInterval(() => escrow.pollStatus(matchId), 3000)
+    return () => clearInterval(interval)
+  }, [escrow.phase, matchId, escrow.pollStatus])
+
+  // Auto-settle when we have a winner + both deposited
+  const settleAttempted = useRef(false)
+  useEffect(() => {
+    if (!matchWinner || !matchId || settleAttempted.current) return
+    if (escrow.phase !== "both_deposited") return
+
+    settleAttempted.current = true
+
+    // Determine winner side from the matchWinner string the API returns
+    const winnerIsB =
+      !!matchWinner && (
+        matchWinner.toLowerCase().includes(playerB.toLowerCase()) ||
+        matchWinner.toUpperCase().includes(" B") ||
+        matchWinner.toUpperCase().startsWith("B")
+      )
+
+    // Tell the backend which side won — it knows both wallet addresses
+    escrow.settle(matchId, winnerIsB ? "B" : "A")
+  }, [matchWinner, matchId, escrow.phase, playerB])
+
+  // Copy match code to clipboard
+  const copyMatchCode = useCallback(() => {
+    if (!matchId) return
+    navigator.clipboard.writeText(matchId)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }, [matchId])
 
   // Always poll /score every second
   useEffect(() => {
@@ -71,25 +108,6 @@ export default function HomePage() {
       if (scoreIntervalRef.current) clearInterval(scoreIntervalRef.current)
     }
   }, [setScoreA, setScoreB, setLastPoint, setMatchWinner])
-
-  // Auto-release escrow when API reports a winner
-  useEffect(() => {
-    if (!matchWinner || escrow.phase !== "holding") return
-    // Determine if the player we bet on won
-    const winsB =
-      matchWinner.toLowerCase().includes(playerB.toLowerCase()) ||
-      matchWinner.toUpperCase().includes(" B") ||
-      matchWinner.toUpperCase().startsWith("B")
-    const betWon = (bettingOn === "B") === winsB
-    // If we bet on the winner → we receive the opponent's stake
-    // If we bet on the loser  → opponent receives our stake
-    const winnerWallet = betWon
-      ? (publicKey?.toBase58() ?? "")
-      : playerBWallet
-    if (!winnerWallet) return
-    escrow.release(matchId, winnerWallet, Math.round(stakeSOL * LAMPORTS_PER_SOL))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matchWinner])
 
   // Refresh camera frame ~6fps only when detecting
   useEffect(() => {
@@ -112,16 +130,63 @@ export default function HomePage() {
       // proceed even if API reset fails
     }
     escrow.reset()
+    settleAttempted.current = false
+    setMySide(null)
+    setJoinCode("")
     resetMatch()
   }
 
-  const handleStartMatch = async () => {
+  // Create match as Player A: register escrow on backend, then deposit
+  const handleCreateMatch = async () => {
+    if (stakeSOL <= 0) return
     const newMatchId = Math.random().toString(36).slice(2, 11)
     startMatch(newMatchId)
-    if (stakeSOL > 0 && connected) {
-      await escrow.deposit(newMatchId, Math.round(stakeSOL * LAMPORTS_PER_SOL))
+    setMySide("A")
+
+    const info = await escrow.createMatch(newMatchId, stakeSOL)
+    if (info && connected && publicKey) {
+      await escrow.deposit(newMatchId, "A")
     }
   }
+
+  // Join match as Player B: deposit into existing escrow
+  const handleJoinMatch = async () => {
+    if (!joinCode.trim()) return
+    setMySide("B")
+    startMatch(joinCode.trim())
+
+    // Check the match exists on the backend
+    const info = await escrow.pollStatus(joinCode.trim())
+    if (!info) return
+
+    setStakeSOL(info.stakeSOL)
+    if (connected && publicKey) {
+      await escrow.deposit(joinCode.trim(), "B")
+    }
+  }
+
+  // Connect wallet then deposit
+  const handleConnectAndDeposit = async () => {
+    if (!wallet) {
+      // Auto-select Phantom if available
+      const phantom = wallets.find((w) => w.adapter.name === "Phantom")
+      if (phantom) select(phantom.adapter.name)
+    }
+    try {
+      await connect()
+    } catch {
+      // user rejected
+    }
+  }
+
+  // After wallet connects, auto-deposit if we have a side but haven't deposited yet
+  useEffect(() => {
+    if (!connected || !publicKey || !mySide || !matchId) return
+    if (escrow.phase !== "awaiting_deposit") return
+
+    escrow.deposit(matchId, mySide)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, publicKey, mySide, matchId, escrow.phase])
 
   const handleCameraToggle = () => {
     if (detectionStatus === "disconnected") {
@@ -212,166 +277,142 @@ export default function HomePage() {
         </div>
       </motion.div>
 
-      {/* Escrow / Wallet panel — shown only in idle state */}
+      {/* Solana Bet panel — shown only in idle state */}
       {gameStatus === "idle" && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.12 }}
-          className="mb-6 bg-card rounded-2xl border border-border p-4 space-y-3"
+          className="mb-6 bg-card rounded-2xl border border-border p-4 space-y-4"
         >
-          <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Solana Bet</p>
+          <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Solana Escrow Bet</p>
 
-          {/* Wallet connect */}
-          {!connected ? (
-            <div className="space-y-2">
-              <Button
-                variant="secondary"
-                className="w-full h-10 text-sm rounded-xl"
-                onClick={() => setShowWallets((v) => !v)}
-              >
-                <Wallet className="w-4 h-4 mr-2" />
-                Connect Wallet
+          {/* Wallet connection status */}
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full shrink-0 ${connected ? "bg-green-500" : "bg-muted-foreground/30"}`} />
+            <span className="text-xs text-muted-foreground">
+              {connected && publicKey
+                ? <span className="font-mono text-foreground">{shortenAddress(publicKey.toBase58())}</span>
+                : "Wallet not connected"}
+            </span>
+            {!connected && (
+              <Button variant="secondary" size="sm" className="h-7 text-xs rounded-lg ml-auto"
+                onClick={handleConnectAndDeposit}>
+                <Wallet className="w-3 h-3 mr-1" />Connect Phantom
               </Button>
-              {showWallets && (
-                <div className="space-y-1">
-                  {wallets.map((w) => (
-                    <Button
-                      key={w.adapter.name}
-                      variant="ghost"
-                      className="w-full h-9 text-sm rounded-xl justify-start"
-                      onClick={() => {
-                        select(w.adapter.name)
-                        connect().catch(() => {})
-                        setShowWallets(false)
-                      }}
-                    >
-                      {w.adapter.name}
-                    </Button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-green-500" />
-                <span className="text-xs font-mono text-muted-foreground">
-                  {shortenAddress(publicKey!.toBase58())}
-                </span>
-              </div>
-              <Button variant="ghost" size="sm" className="text-xs h-7 rounded-lg" onClick={() => disconnect()}>
+            )}
+            {connected && (
+              <Button variant="ghost" size="sm" className="h-7 text-xs rounded-lg ml-auto"
+                onClick={() => disconnect()}>
                 Disconnect
               </Button>
-            </div>
-          )}
+            )}
+          </div>
 
-          {/* Bet config */}
-          {connected && (
-            <>
-              {/* Who are you betting on? */}
-              <div>
-                <p className="text-[11px] text-muted-foreground mb-1.5">I'm betting on</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setBettingOn("A")}
-                    className={`h-10 rounded-xl text-sm font-medium border transition-colors ${
-                      bettingOn === "A"
-                        ? "bg-primary text-primary-foreground border-primary"
-                        : "bg-card text-muted-foreground border-border hover:border-primary/50"
-                    }`}
-                  >
-                    {playerA || "Player 1"}
-                  </button>
-                  <button
-                    onClick={() => setBettingOn("B")}
-                    className={`h-10 rounded-xl text-sm font-medium border transition-colors ${
-                      bettingOn === "B"
-                        ? "bg-primary text-primary-foreground border-primary"
-                        : "bg-card text-muted-foreground border-border hover:border-primary/50"
-                    }`}
-                  >
-                    {playerB || "Player 2"}
-                  </button>
-                </div>
-              </div>
+          <div className="border-t border-border" />
 
-              {/* Stake amount */}
-              <div className="flex items-center gap-2">
-                <Input
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={stakeSOL || ""}
-                  onChange={(e) => setStakeSOL(parseFloat(e.target.value) || 0)}
-                  className="h-9 text-sm rounded-xl flex-1"
-                  placeholder="Stake amount"
-                />
-                <span className="text-xs text-muted-foreground shrink-0">SOL</span>
-              </div>
+          {/* Stake amount */}
+          <div className="flex items-center gap-2">
+            <Input type="number" min={0} step={0.1}
+              value={stakeSOL || ""}
+              onChange={(e) => setStakeSOL(parseFloat(e.target.value) || 0)}
+              className="h-9 text-sm rounded-xl flex-1"
+              placeholder="Stake (SOL)"
+            />
+            <span className="text-xs text-muted-foreground shrink-0">SOL each</span>
+          </div>
 
-              {/* Opponent wallet */}
+          {/* Create or Join */}
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              className="h-10 text-sm rounded-xl"
+              disabled={!connected || stakeSOL <= 0 || escrow.phase !== "idle"}
+              onClick={handleCreateMatch}
+            >
+              <Wallet className="w-4 h-4 mr-1.5" />Create Match
+            </Button>
+            <div className="flex gap-1.5">
               <Input
-                value={playerBWallet}
-                onChange={(e) => setPlayerBWallet(e.target.value)}
-                className="h-9 text-sm rounded-xl font-mono"
-                placeholder="Opponent wallet address"
+                value={joinCode}
+                onChange={(e) => setJoinCode(e.target.value)}
+                className="h-10 text-sm rounded-xl flex-1"
+                placeholder="Match code"
               />
+              <Button
+                variant="secondary"
+                className="h-10 text-sm rounded-xl shrink-0 px-3"
+                disabled={!connected || !joinCode.trim() || escrow.phase !== "idle"}
+                onClick={handleJoinMatch}
+              >
+                Join
+              </Button>
+            </div>
+          </div>
 
-              {stakeSOL > 0 && playerBWallet && (
-                <p className="text-[11px] text-muted-foreground text-center">
-                  You stake <span className="text-foreground font-medium">{stakeSOL} SOL</span> on{" "}
-                  <span className="text-foreground font-medium">{bettingOn === "A" ? (playerA || "Player 1") : (playerB || "Player 2")}</span>.
-                  {" "}If they lose, opponent gets your SOL.
-                </p>
-              )}
-            </>
+          {escrow.error && (
+            <div className="flex items-center gap-1.5 text-destructive">
+              <XCircle className="w-3.5 h-3.5" />
+              <span className="text-xs">{escrow.error}</span>
+            </div>
           )}
         </motion.div>
       )}
 
       {/* Escrow status pill — shown during active match */}
       <AnimatePresence>
-        {(gameStatus === "active" || gameStatus === "paused") && stakeSOL > 0 && (
+        {(gameStatus === "active" || gameStatus === "paused") && (
           <motion.div
             initial={{ opacity: 0, y: -6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
             className="mb-4 space-y-2"
           >
+            {/* Escrow phase indicator */}
             <div className="flex items-center justify-center gap-1.5">
-              <div
-                className={`w-2 h-2 rounded-full ${
-                  escrow.phase === "holding" ? "bg-green-500" :
-                  escrow.phase === "depositing" ? "bg-yellow-400 animate-pulse" :
-                  "bg-muted-foreground/30"
-                }`}
-              />
+              {escrow.phase === "depositing" && <Loader2 className="w-3 h-3 animate-spin text-yellow-500" />}
+              {escrow.phase === "holding" && <Loader2 className="w-3 h-3 animate-spin text-yellow-500" />}
+              {escrow.phase === "both_deposited" && <CheckCircle2 className="w-3 h-3 text-green-500" />}
+              {escrow.phase === "settled" && <CheckCircle2 className="w-3 h-3 text-green-500" />}
+              {(escrow.phase === "idle" || escrow.phase === "awaiting_deposit") && <div className="w-2 h-2 rounded-full bg-muted-foreground/30" />}
               <span className="text-xs text-muted-foreground">
-                {escrow.phase === "holding"
-                  ? `${stakeSOL} SOL on ${bettingOn === "A" ? (playerA || "Player 1") : (playerB || "Player 2")}`
-                  : escrow.phase === "depositing" ? "Depositing…"
-                  : "No bet"}
+                {escrow.phase === "depositing" && "Depositing SOL..."}
+                {escrow.phase === "holding" && `Waiting for opponent (${stakeSOL} SOL locked)`}
+                {escrow.phase === "both_deposited" && `${stakeSOL * 2} SOL in escrow — game on!`}
+                {escrow.phase === "settling" && "Settling payout..."}
+                {escrow.phase === "settled" && "Payout complete!"}
+                {escrow.phase === "idle" && stakeSOL > 0 && `${stakeSOL} SOL at stake`}
+                {escrow.phase === "idle" && stakeSOL <= 0 && "No bet"}
+                {escrow.phase === "awaiting_deposit" && "Connect wallet to deposit"}
+                {escrow.phase === "error" && (escrow.error || "Escrow error")}
               </span>
             </div>
-            {/* DEV ONLY: simulate winner button to test SOL transfer */}
-            {process.env.NEXT_PUBLIC_SOLANA_NETWORK === "devnet" && escrow.phase === "holding" && playerBWallet && (
+
+            {/* Share match code for Player B */}
+            {matchId && mySide === "A" && escrow.phase === "holding" && (
+              <div className="bg-card border border-border rounded-xl p-3 text-center space-y-2">
+                <p className="text-xs text-muted-foreground">Share this match code with your opponent:</p>
+                <div className="flex items-center justify-center gap-2">
+                  <span className="font-mono text-lg font-bold text-foreground tracking-wider">{matchId}</span>
+                  <Button variant="ghost" size="icon" className="w-7 h-7 rounded-lg" onClick={copyMatchCode}>
+                    {copied ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  </Button>
+                </div>
+                {/* QR code with the match code */}
+                <div className="flex justify-center p-2 bg-white rounded-lg">
+                  <QRCode value={matchId} size={120} bgColor="#ffffff" fgColor="#000000" />
+                </div>
+                <p className="text-[11px] text-muted-foreground">Opponent opens RefAI, pastes this code, and connects their Phantom wallet</p>
+              </div>
+            )}
+
+            {/* DEV ONLY: simulate winner buttons */}
+            {process.env.NEXT_PUBLIC_SOLANA_NETWORK === "devnet" && (
               <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1 h-8 text-xs rounded-xl"
-                  onClick={() => setMatchWinner(`${playerA} wins (test)`)}
-                >
-                  🧪 {playerA} wins
+                <Button variant="outline" size="sm" className="flex-1 h-8 text-xs rounded-xl" onClick={() => setMatchWinner(`${playerA} wins (test)`)}>
+                  {playerA} wins
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1 h-8 text-xs rounded-xl"
-                  onClick={() => setMatchWinner(`${playerB} wins (test)`)}
-                >
-                  🧪 {playerB} wins
+                <Button variant="outline" size="sm" className="flex-1 h-8 text-xs rounded-xl" onClick={() => setMatchWinner(`${playerB} wins (test)`)}>
+                  {playerB} wins
                 </Button>
               </div>
             )}
@@ -379,35 +420,49 @@ export default function HomePage() {
         )}
       </AnimatePresence>
 
-      {/* Winner + release banner */}
+      {/* Winner + auto-payout banner */}
       <AnimatePresence>
         {matchWinner && (
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0 }}
-            className="mb-6 bg-primary/10 border border-primary/20 rounded-2xl p-4 text-center"
+            className="mb-6 bg-primary/10 border border-primary/20 rounded-2xl p-4 text-center space-y-3"
           >
-            <Trophy className="w-5 h-5 text-primary mx-auto mb-1" />
-            <p className="text-sm font-semibold text-foreground">{matchWinner} wins!</p>
-            {escrow.phase === "releasing" && (
-              <p className="text-xs text-muted-foreground mt-1">Releasing escrow…</p>
-            )}
-            {escrow.phase === "released" && escrow.releaseSig && escrow.releaseSig !== "SIMULATION" && (
-              <a
-                href={solscanTx(escrow.releaseSig, process.env.NEXT_PUBLIC_SOLANA_NETWORK ?? "devnet")}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-xs text-primary mt-1 underline"
-              >
-                View transaction <ExternalLink className="w-3 h-3" />
-              </a>
-            )}
-            {escrow.phase === "released" && escrow.releaseSig === "SIMULATION" && (
-              <p className="text-xs text-muted-foreground mt-1">Escrow released (demo mode)</p>
-            )}
-            {escrow.error && (
-              <p className="text-xs text-destructive mt-1">{escrow.error}</p>
+            <Trophy className="w-5 h-5 text-primary mx-auto" />
+            <p className="text-sm font-semibold text-foreground">{matchWinner}!</p>
+
+            {stakeSOL > 0 && (
+              <div className="space-y-2">
+                {escrow.phase === "settling" && (
+                  <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    AI Referee is settling payout...
+                  </div>
+                )}
+                {escrow.phase === "settled" && (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-center gap-1.5 text-green-600">
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span className="text-sm font-medium">{stakeSOL * 2} SOL paid to winner!</span>
+                    </div>
+                    {escrow.settleSig && (
+                      <p className="text-[11px] text-muted-foreground font-mono">
+                        tx: {shortenAddress(escrow.settleSig, 8)}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {escrow.phase === "error" && (
+                  <div className="flex items-center justify-center gap-1.5 text-destructive">
+                    <XCircle className="w-3.5 h-3.5" />
+                    <span className="text-xs">{escrow.error}</span>
+                  </div>
+                )}
+                {escrow.phase === "both_deposited" && !settleAttempted.current && (
+                  <p className="text-xs text-muted-foreground">Payout will be triggered automatically...</p>
+                )}
+              </div>
             )}
           </motion.div>
         )}
@@ -551,10 +606,10 @@ export default function HomePage() {
         {gameStatus === "idle" && (
           <Button
             className="w-full h-12 text-sm font-medium rounded-xl"
-            onClick={handleStartMatch}
+            onClick={() => startMatch(Math.random().toString(36).slice(2, 11))}
           >
             <Play className="w-4 h-4 mr-2" />
-            Start Match
+            Start Match (No Bet)
           </Button>
         )}
 

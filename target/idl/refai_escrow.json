@@ -1,0 +1,364 @@
+{
+  "address": "5YpYBhXdpqUuw7gpmsuoL3bsyW9XYsAVxBqeh3Mj2aHz",
+  "metadata": {
+    "name": "refai_escrow",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "RefAI on-chain escrow for trustless betting"
+  },
+  "docs": [
+    "RefAI Escrow — trustless 1-v-1 betting with an AI referee.",
+    "",
+    "Flow:",
+    "1. Player A calls `init_escrow`  → creates PDA, deposits SOL",
+    "2. Player B calls `join_escrow`  → deposits matching SOL",
+    "3. Referee (backend keypair) calls `settle_escrow` → winner receives pot",
+    "OR either player calls `cancel_escrow` before opponent joins."
+  ],
+  "instructions": [
+    {
+      "name": "cancel_escrow",
+      "docs": [
+        "Cancel an escrow before Player B joins — refunds Player A."
+      ],
+      "discriminator": [
+        156,
+        203,
+        54,
+        179,
+        38,
+        72,
+        33,
+        21
+      ],
+      "accounts": [
+        {
+          "name": "escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "match_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "player_a",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "_match_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "init_escrow",
+      "docs": [
+        "Player A creates the escrow and deposits `lamports`."
+      ],
+      "discriminator": [
+        70,
+        46,
+        40,
+        23,
+        6,
+        11,
+        81,
+        139
+      ],
+      "accounts": [
+        {
+          "name": "escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "match_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "player_a",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "match_id",
+          "type": "string"
+        },
+        {
+          "name": "lamports",
+          "type": "u64"
+        },
+        {
+          "name": "referee",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "join_escrow",
+      "docs": [
+        "Player B joins the escrow and deposits the matching stake."
+      ],
+      "discriminator": [
+        205,
+        250,
+        117,
+        19,
+        126,
+        211,
+        205,
+        103
+      ],
+      "accounts": [
+        {
+          "name": "escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "match_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "player_b",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "_match_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "settle_escrow",
+      "docs": [
+        "Referee settles the escrow — sends the full pot to the winner."
+      ],
+      "discriminator": [
+        22,
+        135,
+        160,
+        194,
+        23,
+        186,
+        124,
+        110
+      ],
+      "accounts": [
+        {
+          "name": "escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "match_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "referee",
+          "signer": true
+        },
+        {
+          "name": "winner",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "_match_id",
+          "type": "string"
+        },
+        {
+          "name": "winner",
+          "type": "pubkey"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Escrow",
+      "discriminator": [
+        31,
+        213,
+        123,
+        187,
+        186,
+        22,
+        218,
+        155
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "ZeroStake",
+      "msg": "Stake must be greater than zero"
+    },
+    {
+      "code": 6001,
+      "name": "MatchIdTooLong",
+      "msg": "Match ID must be ≤ 32 characters"
+    },
+    {
+      "code": 6002,
+      "name": "NotInitialized",
+      "msg": "Escrow not initialized"
+    },
+    {
+      "code": 6003,
+      "name": "AlreadyFull",
+      "msg": "Both players have already deposited"
+    },
+    {
+      "code": 6004,
+      "name": "AlreadySettled",
+      "msg": "Escrow has already been settled"
+    },
+    {
+      "code": 6005,
+      "name": "NotFull",
+      "msg": "Both deposits required before settling"
+    },
+    {
+      "code": 6006,
+      "name": "InvalidWinner",
+      "msg": "Winner must be player A or player B"
+    },
+    {
+      "code": 6007,
+      "name": "UnauthorizedReferee",
+      "msg": "Only the designated referee can settle"
+    },
+    {
+      "code": 6008,
+      "name": "WinnerMismatch",
+      "msg": "Winner account does not match the declared winner"
+    },
+    {
+      "code": 6009,
+      "name": "Unauthorized",
+      "msg": "Unauthorized"
+    }
+  ],
+  "types": [
+    {
+      "name": "Escrow",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "match_id",
+            "type": "string"
+          },
+          {
+            "name": "player_a",
+            "type": "pubkey"
+          },
+          {
+            "name": "player_b",
+            "type": "pubkey"
+          },
+          {
+            "name": "referee",
+            "type": "pubkey"
+          },
+          {
+            "name": "stake",
+            "type": "u64"
+          },
+          {
+            "name": "player_a_deposited",
+            "type": "bool"
+          },
+          {
+            "name": "player_b_deposited",
+            "type": "bool"
+          },
+          {
+            "name": "settled",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -4,61 +4,105 @@ import { useCallback, useRef, useState } from "react"
 import { useConnection, useWallet } from "@solana/wallet-adapter-react"
 import { LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from "@solana/web3.js"
 
-// ─── Config ───────────────────────────────────────────────────────────────────
-// Set NEXT_PUBLIC_PROGRAM_ID for full on-chain escrow (Anchor program required).
-// Set NEXT_PUBLIC_ESCROW_MODE=direct for real devnet transfers without a program.
-// Without either, the hook runs in simulation mode — no real SOL moves.
-const PROGRAM_ID_STR = process.env.NEXT_PUBLIC_PROGRAM_ID
-const DIRECT_MODE = process.env.NEXT_PUBLIC_ESCROW_MODE === "direct"
-
-// ─── Escrow PDA seed ─────────────────────────────────────────────────────────
-function getEscrowPDA(matchId: string, programId: PublicKey) {
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from("escrow"), Buffer.from(matchId)],
-    programId
-  )
+// ─── Escrow API helper ──────────────────────────────────────────────────────
+async function escrowApi(body: Record<string, unknown>) {
+  const res = await fetch("/api/escrow", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error ?? "Escrow API error")
+  return data
 }
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Types ──────────────────────────────────────────────────────────────────
 export type EscrowPhase =
   | "idle"
-  | "depositing"
-  | "holding"    // funds are in escrow
-  | "releasing"
-  | "released"
+  | "creating"         // backend registers the match
+  | "awaiting_deposit" // waiting for player to sign deposit tx
+  | "depositing"       // tx is in flight
+  | "holding"          // this player deposited; waiting for opponent
+  | "both_deposited"   // both players deposited; game can start
+  | "settling"
+  | "settled"
+  | "cancelled"
   | "error"
+
+export interface MatchEscrowInfo {
+  matchId: string
+  stakeSOL: number
+  stakeLamports: number
+  refereePubkey: string
+  programId: string
+  escrowPDA: string | null
+  playerADeposited: boolean
+  playerBDeposited: boolean
+  settled: boolean
+}
 
 export interface EscrowResult {
   phase: EscrowPhase
+  matchInfo: MatchEscrowInfo | null
   depositSig: string | null
-  releaseSig: string | null
+  settleSig: string | null
   error: string | null
-  /** true when NEXT_PUBLIC_PROGRAM_ID is set */
-  programReady: boolean
-  /** SOL balance of the connected wallet (null until fetched) */
   balance: number | null
-  deposit: (matchId: string, lamports: number) => Promise<string | null>
-  release: (matchId: string, winnerPubkey: string, lamports: number) => Promise<string | null>
+  createMatch: (matchId: string, stakeSOL: number) => Promise<MatchEscrowInfo | null>
+  deposit: (matchId: string, side: "A" | "B") => Promise<string | null>
+  pollStatus: (matchId: string) => Promise<MatchEscrowInfo | null>
+  settle: (matchId: string, winnerSide: string) => Promise<string | null>
+  cancel: (matchId: string) => Promise<boolean>
   reset: () => void
 }
 
-// ─── Hook ────────────────────────────────────────────────────────────────────
+// ─── Hook ───────────────────────────────────────────────────────────────────
 export function useEscrow(): EscrowResult {
   const { connection } = useConnection()
   const { publicKey, sendTransaction, connected } = useWallet()
 
   const [phase, setPhase] = useState<EscrowPhase>("idle")
+  const [matchInfo, setMatchInfo] = useState<MatchEscrowInfo | null>(null)
   const [depositSig, setDepositSig] = useState<string | null>(null)
-  const [releaseSig, setReleaseSig] = useState<string | null>(null)
+  const [settleSig, setSettleSig] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [balance, setBalance] = useState<number | null>(null)
-  const releaseCalledRef = useRef(false)
+  const settleCalledRef = useRef(false)
 
-  const programReady = !!PROGRAM_ID_STR || DIRECT_MODE
+  // ── createMatch ───────────────────────────────────────────────────────────
+  const createMatch = useCallback(
+    async (matchId: string, stakeSOL: number): Promise<MatchEscrowInfo | null> => {
+      setPhase("creating")
+      setError(null)
+      try {
+        const data = await escrowApi({ action: "create", matchId, stakeSOL })
+        const info: MatchEscrowInfo = {
+          matchId: data.matchId,
+          stakeSOL: data.stakeSOL,
+          stakeLamports: data.stakeLamports,
+          refereePubkey: data.refereePubkey,
+          programId: data.programId,
+          escrowPDA: null,
+          playerADeposited: false,
+          playerBDeposited: false,
+          settled: false,
+        }
+        setMatchInfo(info)
+        setPhase("awaiting_deposit")
+        return info
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        setError(msg)
+        setPhase("error")
+        return null
+      }
+    },
+    []
+  )
 
-  // ── deposit ────────────────────────────────────────────────────────────────
+  // ── deposit ───────────────────────────────────────────────────────────────
   const deposit = useCallback(
-    async (matchId: string, lamports: number): Promise<string | null> => {
+    async (matchId: string, side: "A" | "B"): Promise<string | null> => {
       if (!connected || !publicKey || !sendTransaction) {
         setError("Wallet not connected")
         setPhase("error")
@@ -68,66 +112,64 @@ export function useEscrow(): EscrowResult {
       setPhase("depositing")
       setError(null)
 
-      // Pure simulation — no wallet interaction at all
-      if (!PROGRAM_ID_STR && !DIRECT_MODE) {
-        await new Promise((r) => setTimeout(r, 800))
-        setPhase("holding")
-        setDepositSig("SIMULATION")
-        return "SIMULATION"
-      }
-
-      // Direct mode — Player A confirms they are committing the stake.
-      // Funds stay in Player A's wallet until release; a 0-lamport self-transfer
-      // is used here just to prove wallet connectivity and get a real txn sig.
-      if (DIRECT_MODE) {
-        try {
-          const tx = new Transaction().add(
-            SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: publicKey, lamports: 0 })
-          )
-          const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
-          tx.recentBlockhash = blockhash
-          tx.feePayer = publicKey
-          const sig = await sendTransaction(tx, connection)
-          await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed")
-          const bal = await connection.getBalance(publicKey)
-          setBalance(bal / LAMPORTS_PER_SOL)
-          setDepositSig(sig)
-          setPhase("holding")
-          return sig
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e)
-          setError(msg)
-          setPhase("error")
-          return null
-        }
-      }
-
       try {
-        const programId = new PublicKey(PROGRAM_ID_STR!)
-        const [escrowPDA] = getEscrowPDA(matchId, programId)
+        // 1. Tell the backend which player is depositing (records wallet, returns referee pubkey)
+        const data = await escrowApi({
+          action: "build_deposit_tx",
+          matchId,
+          playerWallet: publicKey.toBase58(),
+          side,
+        })
 
-        // ── TODO: replace with Anchor program CPI once program is deployed ──
-        // const program = new Program(IDL, programId, anchorProvider)
-        // const sig = await program.methods
-        //   .initializeEscrow(matchId, new BN(lamports), playerBPubkey)
-        //   .accounts({ escrow: escrowPDA, playerA: publicKey, systemProgram: SystemProgram.programId })
-        //   .rpc()
-        //
-        // Placeholder: raw SOL transfer to the escrow PDA address so the
-        // organiser can at least demonstrate the flow before the program is live.
+        // 2. Build the deposit transaction locally — avoids any serialization issues
+        //    Funds go to the referee wallet; referee pays out the winner on settle.
+        const refereePubkey = new PublicKey(data.refereePubkey)
+        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
         const tx = new Transaction().add(
-          SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: escrowPDA, lamports })
+          SystemProgram.transfer({
+            fromPubkey: publicKey,
+            toPubkey: refereePubkey,
+            lamports: data.stakeLamports,
+          })
         )
+        tx.recentBlockhash = blockhash
+        tx.feePayer = publicKey
 
         const sig = await sendTransaction(tx, connection)
-        await connection.confirmTransaction(sig, "confirmed")
+        await connection.confirmTransaction(
+          { signature: sig, blockhash, lastValidBlockHeight },
+          "confirmed"
+        )
 
-        // Refresh balance
+        // 3. Tell backend the deposit is confirmed
+        const confirmData = await escrowApi({
+          action: "confirm_deposit",
+          matchId,
+          side,
+          signature: sig,
+        })
+
+        // Update balance
         const bal = await connection.getBalance(publicKey)
         setBalance(bal / LAMPORTS_PER_SOL)
 
         setDepositSig(sig)
-        setPhase("holding")
+        setMatchInfo((prev) =>
+          prev
+            ? {
+                ...prev,
+                escrowPDA: data.escrowPDA,
+                playerADeposited: confirmData.playerADeposited,
+                playerBDeposited: confirmData.playerBDeposited,
+              }
+            : prev
+        )
+
+        if (confirmData.playerADeposited && confirmData.playerBDeposited) {
+          setPhase("both_deposited")
+        } else {
+          setPhase("holding")
+        }
         return sig
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
@@ -139,125 +181,100 @@ export function useEscrow(): EscrowResult {
     [connected, publicKey, sendTransaction, connection]
   )
 
-  // ── release ────────────────────────────────────────────────────────────────
-  const release = useCallback(
-    async (matchId: string, winnerPubkey: string, lamports: number): Promise<string | null> => {
-      // Guard: only release once per match
-      if (releaseCalledRef.current) return releaseSig
-      releaseCalledRef.current = true
-
-      if (!connected || !publicKey || !sendTransaction) {
-        setError("Wallet not connected")
-        setPhase("error")
+  // ── pollStatus ────────────────────────────────────────────────────────────
+  const pollStatus = useCallback(
+    async (matchId: string): Promise<MatchEscrowInfo | null> => {
+      try {
+        const data = await escrowApi({ action: "status", matchId })
+        const info: MatchEscrowInfo = {
+          matchId: data.matchId,
+          stakeSOL: data.stakeSOL,
+          stakeLamports: data.stakeLamports,
+          refereePubkey: "",
+          programId: "",
+          escrowPDA: null,
+          playerADeposited: data.playerADeposited,
+          playerBDeposited: data.playerBDeposited,
+          settled: data.settled,
+        }
+        setMatchInfo((prev) => (prev ? { ...prev, ...info } : info))
+        if (data.playerADeposited && data.playerBDeposited && !data.settled) {
+          setPhase("both_deposited")
+        }
+        return info
+      } catch {
         return null
       }
+    },
+    []
+  )
 
-      if (!winnerPubkey) {
-        setError("Winner wallet address unknown")
-        setPhase("error")
-        return null
-      }
+  // ── settle ────────────────────────────────────────────────────────────────
+  const settle = useCallback(
+    async (matchId: string, winnerSide: string): Promise<string | null> => {
+      if (settleCalledRef.current) return settleSig
+      settleCalledRef.current = true
 
-      setPhase("releasing")
+      setPhase("settling")
       setError(null)
 
-      // Pure simulation
-      if (!PROGRAM_ID_STR && !DIRECT_MODE) {
-        await new Promise((r) => setTimeout(r, 1000))
-        setPhase("released")
-        setReleaseSig("SIMULATION")
-        return "SIMULATION"
-      }
-
-      // Direct mode — Player A's wallet sends the staked amount straight to winner
-      if (DIRECT_MODE) {
-        try {
-          const winner = new PublicKey(winnerPubkey)
-          if (lamports === 0) {
-            // No stake configured — still mark released so UI updates
-            setPhase("released")
-            setReleaseSig("NO_STAKE")
-            return "NO_STAKE"
-          }
-          const tx = new Transaction().add(
-            SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: winner, lamports })
-          )
-          const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
-          tx.recentBlockhash = blockhash
-          tx.feePayer = publicKey
-          const sig = await sendTransaction(tx, connection)
-          await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed")
-          const bal = await connection.getBalance(publicKey)
-          setBalance(bal / LAMPORTS_PER_SOL)
-          setReleaseSig(sig)
-          setPhase("released")
-          return sig
-        } catch (e) {
-          releaseCalledRef.current = false
-          const msg = e instanceof Error ? e.message : String(e)
-          setError(msg)
-          setPhase("error")
-          return null
-        }
-      }
-
       try {
-        const winner = new PublicKey(winnerPubkey)
-        const programId = new PublicKey(PROGRAM_ID_STR!)
-        const [escrowPDA] = getEscrowPDA(matchId, programId)
-
-        // ── TODO: replace with Anchor program CPI once program is deployed ──
-        // const program = new Program(IDL, programId, anchorProvider)
-        // const sig = await program.methods
-        //   .releaseToWinner(matchId)
-        //   .accounts({ escrow: escrowPDA, winner, authority: publicKey, systemProgram: SystemProgram.programId })
-        //   .rpc()
-        //
-        // Placeholder: organiser wallet sends escrowed amount to winner directly.
-        // This is NOT trustless — replace with the program instruction above.
-        const escrowBalance = await connection.getBalance(escrowPDA)
-        if (escrowBalance === 0) {
-          setError("Escrow account is empty")
-          setPhase("error")
-          releaseCalledRef.current = false
-          return null
-        }
-
-        const tx = new Transaction().add(
-          SystemProgram.transfer({
-            fromPubkey: publicKey,
-            toPubkey: winner,
-            lamports: escrowBalance,
-          })
-        )
-
-        const sig = await sendTransaction(tx, connection)
-        await connection.confirmTransaction(sig, "confirmed")
-
-        setReleaseSig(sig)
-        setPhase("released")
-        return sig
+        const data = await escrowApi({
+          action: "settle",
+          matchId,
+          winnerSide,
+        })
+        setSettleSig(data.signature)
+        setPhase("settled")
+        return data.signature
       } catch (e) {
-        releaseCalledRef.current = false
+        settleCalledRef.current = false
         const msg = e instanceof Error ? e.message : String(e)
         setError(msg)
         setPhase("error")
         return null
       }
     },
-    [connected, publicKey, sendTransaction, connection, releaseSig]
+    [settleSig]
   )
 
-  // ── reset ──────────────────────────────────────────────────────────────────
-  const reset = useCallback(() => {
-    releaseCalledRef.current = false
-    setPhase("idle")
-    setDepositSig(null)
-    setReleaseSig(null)
-    setError(null)
+  // ── cancel ────────────────────────────────────────────────────────────────
+  const cancel = useCallback(async (matchId: string): Promise<boolean> => {
+    try {
+      await escrowApi({ action: "cancel", matchId })
+      setPhase("cancelled")
+      return true
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setError(msg)
+      return false
+    }
   }, [])
 
-  return { phase, depositSig, releaseSig, error, programReady, balance, deposit, release, reset }
+  // ── reset ─────────────────────────────────────────────────────────────────
+  const reset = useCallback(() => {
+    setPhase("idle")
+    setMatchInfo(null)
+    setDepositSig(null)
+    setSettleSig(null)
+    setError(null)
+    settleCalledRef.current = false
+  }, [])
+
+  return {
+    phase,
+    matchInfo,
+    depositSig,
+    settleSig,
+    error,
+    balance,
+    createMatch,
+    deposit,
+    pollStatus,
+    settle,
+    cancel,
+    reset,
+  }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

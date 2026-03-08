@@ -1,0 +1,21 @@
+[toolchain]
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.devnet]
+refai_escrow = "5YpYBhXdpqUuw7gpmsuoL3bsyW9XYsAVxBqeh3Mj2aHz"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"
+
+[workspace]
+members = ["programs/refai_escrow"]
+
+[scripts]
+test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
