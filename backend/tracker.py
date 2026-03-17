@@ -7,10 +7,6 @@ import cv2
 import numpy as np
 
 
-# =====================================================================
-# Ball tracker  (HSV color + Kalman filter)
-# =====================================================================
-
 class BallTracker:
     MAX_JUMP_PX = 350        # allow larger jumps for fast balls
     MAX_LOST_FRAMES = 20     # coast on Kalman for up to 20 frames
@@ -154,10 +150,6 @@ def sample_ball_color(frame: np.ndarray, cx: int, cy: int) -> tuple[list[int], l
     hi = [int(min(180, ah+15)), int(min(255, a_s+55)), int(min(255, av+55))]
     return lo, hi
 
-
-# =====================================================================
-# Bounce + out-of-bounds detectors
-# =====================================================================
 
 class BounceDetector:
     COOLDOWN_FRAMES = 18

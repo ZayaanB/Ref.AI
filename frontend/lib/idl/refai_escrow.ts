@@ -1,10 +1,4 @@
-/**
- * RefAI Escrow — IDL (Interface Description Language)
- *
- * This is the TypeScript representation of the on-chain Anchor program.
- * After deploying with `anchor build && anchor deploy`, replace the
- * programId below with the actual deployed address.
- */
+// RefAI Escrow IDL — replace programId after deploy
 export type RefaiEscrow = {
   version: "0.1.0"
   name: "refai_escrow"

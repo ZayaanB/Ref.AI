@@ -4,7 +4,6 @@ import { useCallback, useRef, useState } from "react"
 import { useConnection, useWallet } from "@solana/wallet-adapter-react"
 import { LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from "@solana/web3.js"
 
-// ─── Escrow API helper ──────────────────────────────────────────────────────
 async function escrowApi(body: Record<string, unknown>) {
   const res = await fetch("/api/escrow", {
     method: "POST",
@@ -16,7 +15,6 @@ async function escrowApi(body: Record<string, unknown>) {
   return data
 }
 
-// ─── Types ──────────────────────────────────────────────────────────────────
 export type EscrowPhase =
   | "idle"
   | "creating"         // backend registers the match
@@ -56,7 +54,6 @@ export interface EscrowResult {
   reset: () => void
 }
 
-// ─── Hook ───────────────────────────────────────────────────────────────────
 export function useEscrow(): EscrowResult {
   const { connection } = useConnection()
   const { publicKey, sendTransaction, connected } = useWallet()
@@ -69,7 +66,6 @@ export function useEscrow(): EscrowResult {
   const [balance, setBalance] = useState<number | null>(null)
   const settleCalledRef = useRef(false)
 
-  // ── createMatch ───────────────────────────────────────────────────────────
   const createMatch = useCallback(
     async (matchId: string, stakeSOL: number): Promise<MatchEscrowInfo | null> => {
       setPhase("creating")
@@ -100,7 +96,6 @@ export function useEscrow(): EscrowResult {
     []
   )
 
-  // ── deposit ───────────────────────────────────────────────────────────────
   const deposit = useCallback(
     async (matchId: string, side: "A" | "B"): Promise<string | null> => {
       if (!connected || !publicKey || !sendTransaction) {
@@ -113,7 +108,6 @@ export function useEscrow(): EscrowResult {
       setError(null)
 
       try {
-        // 1. Tell the backend which player is depositing (records wallet, returns referee pubkey)
         const data = await escrowApi({
           action: "build_deposit_tx",
           matchId,
@@ -121,8 +115,6 @@ export function useEscrow(): EscrowResult {
           side,
         })
 
-        // 2. Build the deposit transaction locally — avoids any serialization issues
-        //    Funds go to the referee wallet; referee pays out the winner on settle.
         const refereePubkey = new PublicKey(data.refereePubkey)
         const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
         const tx = new Transaction().add(
@@ -141,15 +133,13 @@ export function useEscrow(): EscrowResult {
           "confirmed"
         )
 
-        // 3. Tell backend the deposit is confirmed
         const confirmData = await escrowApi({
           action: "confirm_deposit",
           matchId,
           side,
           signature: sig,
-        })
+        }        )
 
-        // Update balance
         const bal = await connection.getBalance(publicKey)
         setBalance(bal / LAMPORTS_PER_SOL)
 
@@ -181,7 +171,6 @@ export function useEscrow(): EscrowResult {
     [connected, publicKey, sendTransaction, connection]
   )
 
-  // ── pollStatus ────────────────────────────────────────────────────────────
   const pollStatus = useCallback(
     async (matchId: string): Promise<MatchEscrowInfo | null> => {
       try {
@@ -209,7 +198,6 @@ export function useEscrow(): EscrowResult {
     []
   )
 
-  // ── settle ────────────────────────────────────────────────────────────────
   const settle = useCallback(
     async (matchId: string, winnerSide: string): Promise<string | null> => {
       if (settleCalledRef.current) return settleSig
@@ -238,7 +226,6 @@ export function useEscrow(): EscrowResult {
     [settleSig]
   )
 
-  // ── cancel ────────────────────────────────────────────────────────────────
   const cancel = useCallback(async (matchId: string): Promise<boolean> => {
     try {
       await escrowApi({ action: "cancel", matchId })
@@ -251,7 +238,6 @@ export function useEscrow(): EscrowResult {
     }
   }, [])
 
-  // ── reset ─────────────────────────────────────────────────────────────────
   const reset = useCallback(() => {
     setPhase("idle")
     setMatchInfo(null)
@@ -277,7 +263,6 @@ export function useEscrow(): EscrowResult {
   }
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 export function solscanTx(sig: string, network = "devnet") {
   return `https://solscan.io/tx/${sig}${network !== "mainnet-beta" ? `?cluster=${network}` : ""}`
 }

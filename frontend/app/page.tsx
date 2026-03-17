@@ -44,7 +44,6 @@ export default function HomePage() {
   const { publicKey, connected, wallet, wallets, select, connect, disconnect } = useWallet()
   const escrow = useEscrow()
 
-  // Track which player slot is depositing on this device
   const [mySide, setMySide] = useState<"A" | "B" | null>(null)
   const [joinCode, setJoinCode] = useState("")
   const [copied, setCopied] = useState(false)
@@ -54,14 +53,12 @@ export default function HomePage() {
   const frameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const scoreIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Poll escrow status when holding (waiting for opponent)
   useEffect(() => {
     if (escrow.phase !== "holding" || !matchId) return
     const interval = setInterval(() => escrow.pollStatus(matchId), 3000)
     return () => clearInterval(interval)
   }, [escrow.phase, matchId, escrow.pollStatus])
 
-  // Auto-settle when we have a winner + both deposited
   const settleAttempted = useRef(false)
   useEffect(() => {
     if (!matchWinner || !matchId || settleAttempted.current) return
@@ -69,7 +66,6 @@ export default function HomePage() {
 
     settleAttempted.current = true
 
-    // Determine winner side from the matchWinner string the API returns
     const winnerIsB =
       !!matchWinner && (
         matchWinner.toLowerCase().includes(playerB.toLowerCase()) ||
@@ -77,11 +73,9 @@ export default function HomePage() {
         matchWinner.toUpperCase().startsWith("B")
       )
 
-    // Tell the backend which side won — it knows both wallet addresses
     escrow.settle(matchId, winnerIsB ? "B" : "A")
   }, [matchWinner, matchId, escrow.phase, playerB])
 
-  // Copy match code to clipboard
   const copyMatchCode = useCallback(() => {
     if (!matchId) return
     navigator.clipboard.writeText(matchId)
@@ -89,7 +83,6 @@ export default function HomePage() {
     setTimeout(() => setCopied(false), 2000)
   }, [matchId])
 
-  // Always poll /score every second
   useEffect(() => {
     const poll = async () => {
       try {
@@ -98,9 +91,7 @@ export default function HomePage() {
         setScoreB(data.score_b)
         if (data.last_point) setLastPoint(data.last_point)
         if (data.match_winner) setMatchWinner(data.match_winner)
-      } catch {
-        // silently ignore transient fetch errors
-      }
+      } catch {}
     }
     poll()
     scoreIntervalRef.current = setInterval(poll, 1000)
@@ -109,7 +100,6 @@ export default function HomePage() {
     }
   }, [setScoreA, setScoreB, setLastPoint, setMatchWinner])
 
-  // Refresh camera frame ~6fps only when detecting
   useEffect(() => {
     if (detectionStatus !== "detecting") {
       if (frameIntervalRef.current) clearInterval(frameIntervalRef.current)
@@ -126,9 +116,7 @@ export default function HomePage() {
   const handleNewMatch = async () => {
     try {
       await resetGame()
-    } catch {
-      // proceed even if API reset fails
-    }
+    } catch {}
     escrow.reset()
     settleAttempted.current = false
     setMySide(null)
@@ -136,7 +124,6 @@ export default function HomePage() {
     resetMatch()
   }
 
-  // Create match as Player A: register escrow on backend, then deposit
   const handleCreateMatch = async () => {
     if (stakeSOL <= 0) return
     const newMatchId = Math.random().toString(36).slice(2, 11)
@@ -149,13 +136,11 @@ export default function HomePage() {
     }
   }
 
-  // Join match as Player B: deposit into existing escrow
   const handleJoinMatch = async () => {
     if (!joinCode.trim()) return
     setMySide("B")
     startMatch(joinCode.trim())
 
-    // Check the match exists on the backend
     const info = await escrow.pollStatus(joinCode.trim())
     if (!info) return
 
@@ -165,21 +150,16 @@ export default function HomePage() {
     }
   }
 
-  // Connect wallet then deposit
   const handleConnectAndDeposit = async () => {
     if (!wallet) {
-      // Auto-select Phantom if available
       const phantom = wallets.find((w) => w.adapter.name === "Phantom")
       if (phantom) select(phantom.adapter.name)
     }
     try {
       await connect()
-    } catch {
-      // user rejected
-    }
+    } catch {}
   }
 
-  // After wallet connects, auto-deposit if we have a side but haven't deposited yet
   useEffect(() => {
     if (!connected || !publicKey || !mySide || !matchId) return
     if (escrow.phase !== "awaiting_deposit") return
@@ -207,14 +187,12 @@ export default function HomePage() {
 
   return (
     <div className="px-5 pt-16 pb-8">
-      {/* Camera Section */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.05 }}
         className="mb-6"
       >
-        {/* AI Status Badge */}
         <div className="flex items-center justify-between mb-3">
           <p className="text-sm font-medium text-foreground">Camera Feed</p>
           <div className="flex items-center gap-1.5">
@@ -277,7 +255,6 @@ export default function HomePage() {
         </div>
       </motion.div>
 
-      {/* Solana Bet panel — shown only in idle state */}
       {gameStatus === "idle" && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -287,7 +264,6 @@ export default function HomePage() {
         >
           <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Solana Escrow Bet</p>
 
-          {/* Wallet connection status */}
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full shrink-0 ${connected ? "bg-green-500" : "bg-muted-foreground/30"}`} />
             <span className="text-xs text-muted-foreground">
@@ -311,7 +287,6 @@ export default function HomePage() {
 
           <div className="border-t border-border" />
 
-          {/* Stake amount */}
           <div className="flex items-center gap-2">
             <Input type="number" min={0} step={0.1}
               value={stakeSOL || ""}
@@ -322,7 +297,6 @@ export default function HomePage() {
             <span className="text-xs text-muted-foreground shrink-0">SOL each</span>
           </div>
 
-          {/* Create or Join */}
           <div className="grid grid-cols-2 gap-3">
             <Button
               className="h-10 text-sm rounded-xl"
@@ -358,7 +332,6 @@ export default function HomePage() {
         </motion.div>
       )}
 
-      {/* Escrow status pill — shown during active match */}
       <AnimatePresence>
         {(gameStatus === "active" || gameStatus === "paused") && (
           <motion.div
@@ -367,7 +340,6 @@ export default function HomePage() {
             exit={{ opacity: 0 }}
             className="mb-4 space-y-2"
           >
-            {/* Escrow phase indicator */}
             <div className="flex items-center justify-center gap-1.5">
               {escrow.phase === "depositing" && <Loader2 className="w-3 h-3 animate-spin text-yellow-500" />}
               {escrow.phase === "holding" && <Loader2 className="w-3 h-3 animate-spin text-yellow-500" />}
@@ -387,7 +359,6 @@ export default function HomePage() {
               </span>
             </div>
 
-            {/* Share match code for Player B */}
             {matchId && mySide === "A" && escrow.phase === "holding" && (
               <div className="bg-card border border-border rounded-xl p-3 text-center space-y-2">
                 <p className="text-xs text-muted-foreground">Share this match code with your opponent:</p>
@@ -397,7 +368,6 @@ export default function HomePage() {
                     {copied ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
                   </Button>
                 </div>
-                {/* QR code with the match code */}
                 <div className="flex justify-center p-2 bg-white rounded-lg">
                   <QRCode value={matchId} size={120} bgColor="#ffffff" fgColor="#000000" />
                 </div>
@@ -405,7 +375,6 @@ export default function HomePage() {
               </div>
             )}
 
-            {/* DEV ONLY: simulate winner buttons */}
             {process.env.NEXT_PUBLIC_SOLANA_NETWORK === "devnet" && (
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" className="flex-1 h-8 text-xs rounded-xl" onClick={() => setMatchWinner(`${playerA} wins (test)`)}>
@@ -420,7 +389,6 @@ export default function HomePage() {
         )}
       </AnimatePresence>
 
-      {/* Winner + auto-payout banner */}
       <AnimatePresence>
         {matchWinner && (
           <motion.div
@@ -468,7 +436,6 @@ export default function HomePage() {
         )}
       </AnimatePresence>
 
-      {/* Player Names */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -491,7 +458,6 @@ export default function HomePage() {
         />
       </motion.div>
 
-      {/* Scoreboard */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -499,7 +465,6 @@ export default function HomePage() {
         className="bg-card rounded-2xl p-6 mb-6 border border-border"
       >
         <div className="grid grid-cols-2 gap-4">
-          {/* Player A Score */}
           <div className="text-center">
             <p className="text-xs font-medium text-muted-foreground mb-3 truncate">
               {playerA}
@@ -538,7 +503,6 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Player B Score */}
           <div className="text-center">
             <p className="text-xs font-medium text-muted-foreground mb-3 truncate">
               {playerB}
@@ -579,7 +543,6 @@ export default function HomePage() {
         </div>
       </motion.div>
 
-      {/* Last Point */}
       <AnimatePresence mode="wait">
         {lastPoint && (
           <motion.div
@@ -596,7 +559,6 @@ export default function HomePage() {
         )}
       </AnimatePresence>
 
-      {/* Game Controls */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -664,7 +626,6 @@ export default function HomePage() {
         )}
       </motion.div>
 
-      {/* Features Section */}
       {gameStatus === "idle" && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -698,7 +659,6 @@ export default function HomePage() {
         </motion.div>
       )}
 
-      {/* Last Match */}
       {gameStatus === "idle" && lastGame && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}

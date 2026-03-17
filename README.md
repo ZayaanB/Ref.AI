@@ -11,40 +11,58 @@ A real-time automated ping pong referee system using computer vision. The system
 - Official ping pong scoring (first to 11, win by 2)
 - Standalone OpenCV GUI mode or FastAPI web server mode
 - Interactive calibration wizard
-
-## How It Works
-
-1. **Calibration** — Click on the ball to sample its color, then click the left and right ends of the table. Settings are saved to `calibration.json`.
-2. **Tracking** — Each camera frame is processed with HSV color filtering and Kalman filtering to locate the ball and estimate its velocity.
-3. **Event Detection** — Bounces are detected by monitoring vertical velocity reversals near the table surface. Out-of-bounds fires when the ball exits the normalized table region.
-4. **Game Logic** — A state machine enforces serve rules (ball must bounce server's side first, then cross to the opponent's side) and awards points for faults, missed returns, and out-of-bounds.
-
-The server runs the CV loop in a background thread and exposes a REST API.
-
-**Endpoints:**
-
-| Method | Endpoint      | Description                               |
-| ------ | ------------- | ----------------------------------------- |
-| `GET`  | `/score`      | Current scores, game state, ball position |
-| `POST` | `/game/reset` | Reset scores and start a new game         |
-| `GET`  | `/frame`      | Latest camera frame as JPEG               |
+- Next.js web frontend with Solana escrow for staked matches
 
 ## Project Structure
 
 ```
-AI-referee/
-├── main.py            # Standalone GUI application
-├── server.py          # FastAPI web server
-├── game.py            # Game logic and state machine
-├── tracker.py         # Ball detection and bounce/OOB detection
-├── display.py         # OpenCV drawing utilities
-├── calibration.py     # Interactive calibration wizard
-├── calibration.json   # Saved calibration data
-└── requirements.txt   # Python dependencies
+Ref/
+├── frontend/          # Next.js app (UI, Solana wallet, escrow)
+│   ├── app/           # Pages and API routes
+│   ├── components/    # React components
+│   ├── hooks/         # Custom hooks
+│   ├── lib/           # API client, game context, escrow logic
+│   └── public/        # Static assets
+├── backend/           # Python CV referee (FastAPI)
+│   ├── server.py      # FastAPI server (CV + REST)
+│   ├── game.py        # Game logic and state machine
+│   ├── tracker.py     # Ball detection and bounce/OOB detection
+│   ├── display.py     # OpenCV drawing utilities
+│   ├── calibration.py # Interactive calibration wizard
+│   └── requirements.txt
+└── programs/refai_escrow/  # Solana escrow program (Anchor/Rust)
 ```
 
-![techstack](https://github.com/user-attachments/assets/b341d074-733b-4e1f-b3f9-9995f3832c01)
+## Getting Started
 
+### Backend (Python CV)
+
+```bash
+cd backend
+pip install -r requirements.txt
+python server.py
+```
+
+API runs at `http://localhost:8000`:
+- `GET /score` — Current scores, game state, ball position
+- `POST /game/reset` — Reset scores and start a new game
+- `GET /frame` — Latest camera frame as JPEG
+
+### Frontend (Next.js)
+
+```bash
+cd frontend
+cp .env.local.example .env.local  # Configure Solana, API URL
+pnpm install
+pnpm dev
+```
+
+### Solana Program (optional)
+
+```bash
+anchor build
+anchor deploy
+```
 
 ## Key Technologies
 
@@ -52,9 +70,9 @@ AI-referee/
 | ------------------ | ----------------------------------------------- |
 | OpenCV             | Camera capture, HSV filtering, contour analysis |
 | Kalman Filter      | Smooth predictive ball tracking (x, y, vx, vy)  |
-| Frame Differencing | Motion detection for mid-flight tracking        |
 | FastAPI            | REST API for web frontend integration           |
-| NumPy              | Numerical processing                            |
+| Next.js            | Web frontend, API routes for escrow             |
+| Solana/Anchor      | On-chain escrow for match stakes                |
 
 ## Game Rules Enforced
 

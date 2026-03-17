@@ -16,7 +16,6 @@ export default function HistoryPage() {
 
   return (
     <div className="px-5 pt-14 pb-8">
-      {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -26,7 +25,6 @@ export default function HistoryPage() {
         <p className="text-muted-foreground text-sm mt-0.5">Past matches</p>
       </motion.div>
 
-      {/* Stats */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -49,7 +47,6 @@ export default function HistoryPage() {
         </div>
       </motion.div>
 
-      {/* Match List */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}

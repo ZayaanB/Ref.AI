@@ -23,9 +23,6 @@ from game import CVEvent, RefereeEngine, RallyPhase, TableNormalizer
 from tracker import BallTracker, BounceDetector, OOBDetector
 from display import draw_table, draw_score
 
-# =====================================================================
-# Shared game state (written by CV thread, read by WebSocket handler)
-# =====================================================================
 
 class GameState:
     def __init__(self):
@@ -60,9 +57,6 @@ class GameState:
 
 game_state = GameState()
 
-# =====================================================================
-# CV loop (runs in its own thread)
-# =====================================================================
 
 def cv_loop(camera_index: int, use_saved: bool) -> None:
     cap = cv2.VideoCapture(camera_index)
@@ -93,7 +87,6 @@ def cv_loop(camera_index: int, use_saved: bool) -> None:
     print("CV loop started. Open http://localhost:8000 in your browser.")
 
     while True:
-        # Handle new-game reset request from API
         if game_state.reset_requested:
             engine = RefereeEngine()
             bounce_det = BounceDetector()
@@ -223,13 +216,7 @@ def cv_loop(camera_index: int, use_saved: bool) -> None:
     cv2.destroyAllWindows()
 
 
-# =====================================================================
-# FastAPI app
-# =====================================================================
-
 app = FastAPI(title="Ping Pong Referee API")
-
-# Allow Next.js dev server (and any origin in dev) to call the API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],   # tighten to your Next.js domain in production
@@ -237,9 +224,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ------------------------------------------------------------------
-# REST endpoints (consumed by Next.js)
-# ------------------------------------------------------------------
 
 @app.get("/score")
 async def get_score():
@@ -263,10 +247,6 @@ async def get_frame():
     return Response(content=jpg, media_type="image/jpeg")
 
 
-# =====================================================================
-# Entry point
-# =====================================================================
-
 if __name__ == "__main__":
     import uvicorn
 
@@ -277,7 +257,6 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
 
-    # Start CV loop in background thread
     t = threading.Thread(target=cv_loop, args=(args.camera, args.use_saved), daemon=True)
     t.start()
 

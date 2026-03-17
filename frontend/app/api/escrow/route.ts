@@ -8,7 +8,6 @@ import {
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js"
 
-// ─── Config ──────────────────────────────────────────────────────────────────
 const RPC = process.env.NEXT_PUBLIC_SOLANA_RPC ?? "https://api.devnet.solana.com"
 const PROGRAM_ID = new PublicKey(
   process.env.NEXT_PUBLIC_PROGRAM_ID ?? "11111111111111111111111111111111"
@@ -41,13 +40,11 @@ const matches = new Map<
   }
 >()
 
-// ─── POST /api/escrow — Create / Join / Settle / Cancel / Status ─────────────
 export async function POST(request: Request) {
   try {
     const body = await request.json()
     const { action } = body as { action: string }
 
-    // ── CREATE: register a new match on the backend ──────────────────────────
     if (action === "create") {
       const { matchId, stakeSOL } = body as {
         matchId: string
@@ -81,8 +78,6 @@ export async function POST(request: Request) {
       })
     }
 
-    // ── BUILD_DEPOSIT_TX: build a deposit transaction for Player A or B ──────
-    // The frontend sends this to Phantom via Solana Pay Transaction Request
     if (action === "build_deposit_tx") {
       const { matchId, playerWallet, side } = body as {
         matchId: string
@@ -99,7 +94,6 @@ export async function POST(request: Request) {
         PROGRAM_ID
       )
 
-      // Record the player's wallet
       if (side === "A") {
         match.playerAWallet = playerWallet
       } else {
@@ -109,8 +103,6 @@ export async function POST(request: Request) {
 
       const referee = getRefereeKeypair()
 
-      // Return params so the client can build + sign the transaction locally.
-      // The deposit goes to the referee wallet; referee pays out the winner on settle.
       return NextResponse.json({
         refereePubkey: referee.publicKey.toBase58(),
         stakeLamports: match.stakeLamports,
@@ -118,7 +110,6 @@ export async function POST(request: Request) {
       })
     }
 
-    // ── CONFIRM_DEPOSIT: frontend confirms the tx was sent + confirmed ───────
     if (action === "confirm_deposit") {
       const { matchId, side, signature } = body as {
         matchId: string
@@ -141,7 +132,6 @@ export async function POST(request: Request) {
       })
     }
 
-    // ── SETTLE: AI referee settles — sends pot to winner ─────────────────────
     if (action === "settle") {
       const { matchId, winnerWallet, winnerSide } = body as {
         matchId: string
@@ -155,10 +145,8 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Both players must deposit first" }, { status: 400 })
       }
 
-      // Resolve which wallet gets the pot
       let resolvedWinner = winnerWallet
       if (!resolvedWinner || resolvedWinner === "auto") {
-        // Determine from winnerSide or fall back to playerA
         if (winnerSide === "B" && match.playerBWallet) {
           resolvedWinner = match.playerBWallet
         } else if (match.playerAWallet) {
@@ -179,7 +167,6 @@ export async function POST(request: Request) {
 
       const pot = match.stakeLamports * 2
 
-      // Referee held the deposited funds — pay out the full pot to the winner.
       const tx = new Transaction().add(
         SystemProgram.transfer({
           fromPubkey: referee.publicKey,
@@ -206,7 +193,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ signature: sig, winner: resolvedWinner })
     }
 
-    // ── STATUS: check escrow state ──────────────────────────────────────────
     if (action === "status") {
       const { matchId } = body as { matchId: string }
       const match = matches.get(matchId)

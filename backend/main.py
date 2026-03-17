@@ -25,10 +25,6 @@ from game import CVEvent, RefereeEngine, RallyPhase, TableNormalizer
 from tracker import BallTracker, BounceDetector, OOBDetector
 
 
-# =====================================================================
-# Main loop
-# =====================================================================
-
 def run(camera_index: int, use_saved: bool = False) -> None:
     cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
@@ -181,10 +177,6 @@ def _print_point(engine: RefereeEngine, pt: PointResult) -> None:
     if s.is_match_over():
         print(f"\n  === GAME OVER! {s.match_winner} WINS! ===")
 
-
-# =====================================================================
-# Entry point
-# =====================================================================
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ping Pong Referee")

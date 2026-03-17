@@ -41,10 +41,6 @@ def opponent(p: str) -> str:
     return PLAYER_B if p == PLAYER_A else PLAYER_A
 
 
-# =====================================================================
-# Data classes
-# =====================================================================
-
 @dataclass
 class CVEvent:
     timestamp: int
@@ -60,10 +56,6 @@ class PointResult:
     winner: str
     reason: str
 
-
-# =====================================================================
-# Scoring  (first to 11, lead by 2)
-# =====================================================================
 
 class Scorer:
     def __init__(self, initial_server: str = PLAYER_A):
@@ -108,20 +100,12 @@ class Scorer:
             self.current_server = self.initial_server if block % 2 == 0 else other
 
 
-# =====================================================================
-# Rally phase  (replaces the old binary State enum)
-# =====================================================================
-
 class RallyPhase(str, Enum):
     SERVE_START = "serve"           # Waiting for 1st bounce on server's side
     SERVE_CROSS = "serve-cross"     # 1st bounce done, waiting for receiver's side
     RALLY       = "rally"           # Normal rally
     POINT_END   = "point_end"       # Point ended, waiting for reset
 
-
-# =====================================================================
-# Game state machine  (striker-aware, with serve validation)
-# =====================================================================
 
 class GameStateMachine:
     POST_POINT_LOCKOUT_MS = 1500
@@ -134,12 +118,10 @@ class GameStateMachine:
         self._bounce_history: list[tuple[str, int]] = []
         self._last_point_ts: int = -(self.POST_POINT_LOCKOUT_MS + 1)
 
-    # ── backward-compatible alias used by display module ─────────────
     @property
     def state(self) -> RallyPhase:
         return self.phase
 
-    # ── convenience properties (read-only) ──────────────────────────
     @property
     def last_bounce_side(self) -> str | None:
         return self._bounce_history[-1][0] if self._bounce_history else None
@@ -148,7 +130,6 @@ class GameStateMachine:
     def last_bounce_ts(self) -> int | None:
         return self._bounce_history[-1][1] if self._bounce_history else None
 
-    # ── public interface ─────────────────────────────────────────────
     def process_event(self, event: CVEvent) -> PointResult | None:
         if self.phase == RallyPhase.POINT_END:
             return None
@@ -182,7 +163,6 @@ class GameStateMachine:
         self.phase = RallyPhase.SERVE_START
         self.current_striker = self.server
 
-    # ── internal helpers ─────────────────────────────────────────────
     def _end_point(self, ts: int) -> None:
         self.phase = RallyPhase.POINT_END
         self._last_point_ts = ts
@@ -191,7 +171,6 @@ class GameStateMachine:
         self._end_point(ts)
         return PointResult(winner=winner, reason=reason)
 
-    # ── bounce handler ───────────────────────────────────────────────
     def _handle_bounce(self, event: CVEvent) -> PointResult | None:
         region = table_region(event.x)
         if region == OUT:
@@ -210,7 +189,6 @@ class GameStateMachine:
         side = region
         self._bounce_history.append((side, event.timestamp))
 
-        # --- SERVE phase 1: first bounce must be on server's side ---
         if self.phase == RallyPhase.SERVE_START:
             expected = side_for_player(self.server)
             if side == expected:
@@ -223,7 +201,6 @@ class GameStateMachine:
                 event.timestamp,
             )
 
-        # --- SERVE phase 2: second bounce must be on receiver's side -
         if self.phase == RallyPhase.SERVE_CROSS:
             expected = side_for_player(opponent(self.server))
             if side == expected:
@@ -236,7 +213,6 @@ class GameStateMachine:
                 event.timestamp,
             )
 
-        # --- RALLY phase ─────────────────────────────────────────────
         if len(self._bounce_history) < 2:
             return None
 
@@ -258,7 +234,6 @@ class GameStateMachine:
             self.current_striker = player_for_side(prev_side)
         return None
 
-    # ── OOB handler ──────────────────────────────────────────────────
     def _handle_oob(self, event: CVEvent) -> PointResult | None:
         is_camera_range_oob = (event.oob_source == "camera-range")
         oob_suffix = " (ball out of camera range)" if is_camera_range_oob else ""
@@ -296,10 +271,6 @@ class GameStateMachine:
         )
 
 
-# =====================================================================
-# Referee engine  (wires state machine + scorer together)
-# =====================================================================
-
 class RefereeEngine:
     def __init__(self, initial_server: str = PLAYER_A):
         self.scorer = Scorer(initial_server)
@@ -335,10 +306,6 @@ class RefereeEngine:
             self.state_machine = GameStateMachine(server=self.scorer.current_server)
         return result
 
-
-# =====================================================================
-# Table normalizer  (2-point side-view: linear interpolation)
-# =====================================================================
 
 class TableNormalizer:
     """
